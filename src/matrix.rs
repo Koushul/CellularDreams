@@ -21,12 +21,22 @@ impl Mat {
         Self { nrow, ncol, data }
     }
 
+    #[inline]
     pub fn get(&self, r: usize, c: usize) -> f64 {
         self.data[r + c * self.nrow]
     }
 
+    #[inline]
     pub fn set(&mut self, r: usize, c: usize, v: f64) {
         self.data[r + c * self.nrow] = v;
+    }
+
+    /// Copy one row into `out` without allocating.
+    pub fn copy_row(&self, r: usize, out: &mut [f64]) {
+        assert_eq!(out.len(), self.ncol);
+        for (c, slot) in out.iter_mut().enumerate() {
+            *slot = self.get(r, c);
+        }
     }
 
     pub fn col(&self, c: usize) -> Vec<f64> {
@@ -66,7 +76,9 @@ impl Mat {
     pub fn select_cols(&self, cols: &[usize]) -> Mat {
         let mut out = Mat::zeros(self.nrow, cols.len());
         for (j, &c) in cols.iter().enumerate() {
-            out.set_col(j, &self.col(c));
+            let src = c * self.nrow;
+            let dst = j * self.nrow;
+            out.data[dst..dst + self.nrow].copy_from_slice(&self.data[src..src + self.nrow]);
         }
         out
     }
@@ -103,9 +115,7 @@ impl Mat {
     }
 
     pub fn col_sums(&self) -> Vec<f64> {
-        (0..self.ncol)
-            .map(|c| self.col(c).iter().sum())
-            .collect()
+        (0..self.ncol).map(|c| self.col(c).iter().sum()).collect()
     }
 
     pub fn row_sums(&self) -> Vec<f64> {
@@ -125,6 +135,7 @@ impl Mat {
 
 #[link(name = "openblas")]
 unsafe extern "C" {
+    fn openblas_set_num_threads(num: i32);
     fn cblas_dgemm(
         layout: i32,
         transa: i32,
@@ -146,6 +157,16 @@ unsafe extern "C" {
 const COL_MAJOR: i32 = 102;
 const NO_TRANS: i32 = 111;
 const TRANS: i32 = 112;
+
+/// Keep `dgemm` on one thread.
+///
+/// A multi-threaded product can add the same terms in a different order. That
+/// changes low bits, which can change density ranks, which then changes how
+/// many uniforms the simulator draws. Gene trajectories are parallelized
+/// separately, after those uniforms have been drawn.
+pub fn blas_single_thread() {
+    unsafe { openblas_set_num_threads(1) }
+}
 
 /// `A %*% B` with column-major inputs. `A` is m×k, `B` is k×n.
 pub fn matmul(a: &Mat, b: &Mat) -> Mat {
@@ -180,13 +201,22 @@ pub fn matmul(a: &Mat, b: &Mat) -> Mat {
 
 /// `A %*% t(B)`. `A` is m×k, `B` is n×k, result is m×n.
 pub fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
+    let mut c = Mat::zeros(a.nrow, b.nrow);
+    matmul_bt_into(a, b, &mut c);
+    c
+}
+
+/// `A %*% t(B)` written into an existing `c` of shape m×n.
+pub fn matmul_bt_into(a: &Mat, b: &Mat, c: &mut Mat) {
     assert_eq!(a.ncol, b.ncol);
     let m = a.nrow;
     let k = a.ncol;
     let n = b.nrow;
-    let mut c = Mat::zeros(m, n);
+    assert_eq!(c.nrow, m);
+    assert_eq!(c.ncol, n);
     if m == 0 || n == 0 || k == 0 {
-        return c;
+        c.data.fill(0.0);
+        return;
     }
     unsafe {
         cblas_dgemm(
@@ -206,6 +236,4 @@ pub fn matmul_bt(a: &Mat, b: &Mat) -> Mat {
             m as i32,
         );
     }
-    c
 }
-

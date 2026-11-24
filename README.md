@@ -24,7 +24,7 @@ The following figure briefly shows results from the same cell differential tree:
 
 ## Native Rust simulator
 
-The computational core is also implemented as a native Rust crate (`scmultisim`, no R runtime). It follows R 4.5's default generator (Mersenne-Twister, inversion normals, rejection sampling) and R's long-double `cumsum` / `mean`, so a seeded continuous simulation matches `set.seed(0); Phyla5(); sim_true_counts(...)` bit for bit.
+The computational core is also implemented as a native Rust crate (`scmultisim`, no R runtime). It follows R 4.5's default generator (Mersenne-Twister, inversion normals, rejection sampling) and R's long-double `cumsum` / `mean`. A seeded Beta-Poisson simulation matches `set.seed(0); Phyla5(); sim_true_counts(...)`. Kinetic mode gives each gene its own generator, seeded from the master stream, and integrates those genes in parallel. The telegraph and the `which.min` sampling rule match R; the promoter-switch uniforms do not, so spliced totals are reproducible for a seed and correlate with R gene by gene, without being the same matrix. OpenBLAS `dgemm` stays on one thread because a reassociated product can change density ranks and then every later draw.
 
 ```rust
 let mut rng = scmultisim::Rng::seed(0);
