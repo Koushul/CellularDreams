@@ -422,7 +422,11 @@ impl Rng {
             let v = beta * (u1 / (1.0 - u1)).ln();
             let w = if v <= expmax {
                 let w = scale * v.exp();
-                if w.is_finite() { w } else { f64::MAX }
+                if w.is_finite() {
+                    w
+                } else {
+                    f64::MAX
+                }
             } else {
                 f64::MAX
             };
@@ -460,7 +464,11 @@ impl Rng {
                     }
                 }
             };
-            if aa == a { a / (a + w) } else { w / (a + w) }
+            if aa == a {
+                a / (a + w)
+            } else {
+                w / (a + w)
+            }
         } else {
             let beta = ((alpha - 2.0) / (2.0 * a * b - alpha)).sqrt();
             let gamma = a + 1.0 / beta;
@@ -482,7 +490,11 @@ impl Rng {
                     break w;
                 }
             };
-            if aa != a { b / (b + w) } else { w / (b + w) }
+            if aa != a {
+                b / (b + w)
+            } else {
+                w / (b + w)
+            }
         }
     }
 
@@ -651,7 +663,11 @@ impl Rng {
 }
 
 fn fsign(x: f64, y: f64) -> f64 {
-    if y >= 0.0 { x.abs() } else { -x.abs() }
+    if y >= 0.0 {
+        x.abs()
+    } else {
+        -x.abs()
+    }
 }
 
 fn step_f(
@@ -690,7 +706,8 @@ fn step_f(
         del *= 1.0 - 4.8 * del * del;
         let v = difmuk / fk;
         let px = if v.abs() <= 0.25 {
-            fk * v * v
+            fk * v
+                * v
                 * (((((((a7 * v + a6) * v + a5) * v + a4) * v + a3) * v + a2) * v + a1) * v + a0)
                 - del
         } else {
@@ -769,7 +786,8 @@ pub fn qnorm(p: f64) -> f64 {
     if q.abs() <= 0.425 {
         let r = 0.180625 - q * q;
         return q
-            * (((((((r * 2509.0809287301226727 + 33430.575583588128105) * r + 67265.770927008700853)
+            * (((((((r * 2509.0809287301226727 + 33430.575583588128105) * r
+                + 67265.770927008700853)
                 * r
                 + 45921.953931549871457)
                 * r
@@ -780,7 +798,8 @@ pub fn qnorm(p: f64) -> f64 {
                 + 133.14166789178437745)
                 * r
                 + 3.387132872796366608)
-            / (((((((r * 5226.495278852854561 + 28729.085735721942674) * r + 39307.89580009271061)
+            / (((((((r * 5226.495278852854561 + 28729.085735721942674) * r
+                + 39307.89580009271061)
                 * r
                 + 21213.794301586595867)
                 * r
@@ -796,7 +815,8 @@ pub fn qnorm(p: f64) -> f64 {
     let mut r = (-lp).sqrt();
     let mut val = if r <= 5.0 {
         r += -1.6;
-        (((((((r * 7.7454501427834140764e-4 + 0.0227238449892691845833) * r + 0.24178072517745061177)
+        (((((((r * 7.7454501427834140764e-4 + 0.0227238449892691845833) * r
+            + 0.24178072517745061177)
             * r
             + 1.27045825245236838258)
             * r
@@ -877,7 +897,7 @@ pub fn seq_by(from: f64, to: f64, by: f64) -> Vec<f64> {
 /// Average-tie ranks, 1-based, matching `rank(x, ties.method = "average")`.
 pub fn rank_average(v: &[f64]) -> Vec<f64> {
     let mut idx: Vec<usize> = (0..v.len()).collect();
-    idx.sort_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal));
+    idx.sort_unstable_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap_or(std::cmp::Ordering::Equal));
     let mut ranks = vec![0.0; v.len()];
     let mut i = 0;
     while i < idx.len() {

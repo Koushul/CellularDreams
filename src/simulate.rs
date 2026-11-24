@@ -4,7 +4,7 @@
 //! inside the run, and `Phyla5()` / `Phyla3()` consume the same uniforms as
 //! `ape::rtree(2)` before the topology (which is deterministic) is returned.
 
-use crate::matrix::{matmul, matmul_bt, Mat};
+use crate::matrix::{blas_single_thread, matmul, matmul_bt, matmul_bt_into, Mat};
 use crate::rng::{r_index, rank_average, seq_by, Rng};
 
 #[derive(Clone, Debug)]
@@ -206,8 +206,11 @@ fn builtins() -> Builtins {
 
 /// The bundled 100-gene GRN (`GRN_params_100`).
 pub fn grn_params_100() -> Vec<GrnEdge> {
-    let n = i32::from_le_bytes(include_bytes!("../fixtures/grn100_n.bin")[..4].try_into().unwrap())
-        as usize;
+    let n = i32::from_le_bytes(
+        include_bytes!("../fixtures/grn100_n.bin")[..4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
     let tgt = load_i32(include_bytes!("../fixtures/grn100_tgt.bin"));
     let reg = load_i32(include_bytes!("../fixtures/grn100_reg.bin"));
     let eff = load_f64(include_bytes!("../fixtures/grn100_eff.bin"));
@@ -231,14 +234,46 @@ pub fn phyla5(rng: &mut Rng) -> Tree {
     Tree {
         n_tip: 5,
         edges: vec![
-            Edge { from: 6, to: 7, len: 1.0 },
-            Edge { from: 7, to: 8, len: 1.0 },
-            Edge { from: 8, to: 2, len: 1.0 },
-            Edge { from: 8, to: 3, len: 1.0 },
-            Edge { from: 7, to: 9, len: 1.0 },
-            Edge { from: 9, to: 4, len: 0.2 },
-            Edge { from: 9, to: 5, len: 0.2 },
-            Edge { from: 6, to: 1, len: 3.0 },
+            Edge {
+                from: 6,
+                to: 7,
+                len: 1.0,
+            },
+            Edge {
+                from: 7,
+                to: 8,
+                len: 1.0,
+            },
+            Edge {
+                from: 8,
+                to: 2,
+                len: 1.0,
+            },
+            Edge {
+                from: 8,
+                to: 3,
+                len: 1.0,
+            },
+            Edge {
+                from: 7,
+                to: 9,
+                len: 1.0,
+            },
+            Edge {
+                from: 9,
+                to: 4,
+                len: 0.2,
+            },
+            Edge {
+                from: 9,
+                to: 5,
+                len: 0.2,
+            },
+            Edge {
+                from: 6,
+                to: 1,
+                len: 3.0,
+            },
         ],
     }
 }
@@ -248,10 +283,26 @@ pub fn phyla3(rng: &mut Rng) -> Tree {
     Tree {
         n_tip: 3,
         edges: vec![
-            Edge { from: 4, to: 5, len: 1.0 },
-            Edge { from: 5, to: 2, len: 1.0 },
-            Edge { from: 5, to: 3, len: 1.0 },
-            Edge { from: 4, to: 1, len: 2.0 },
+            Edge {
+                from: 4,
+                to: 5,
+                len: 1.0,
+            },
+            Edge {
+                from: 5,
+                to: 2,
+                len: 1.0,
+            },
+            Edge {
+                from: 5,
+                to: 3,
+                len: 1.0,
+            },
+            Edge {
+                from: 4,
+                to: 1,
+                len: 2.0,
+            },
         ],
     }
 }
@@ -259,7 +310,11 @@ pub fn phyla3(rng: &mut Rng) -> Tree {
 pub fn phyla1(len: f64) -> Tree {
     Tree {
         n_tip: 1,
-        edges: vec![Edge { from: 2, to: 1, len }],
+        edges: vec![Edge {
+            from: 2,
+            to: 1,
+            len,
+        }],
     }
 }
 
@@ -271,10 +326,7 @@ struct PreparedGrn {
 }
 
 fn prepare_grn(edges: &[GrnEdge], ratio: f64) -> PreparedGrn {
-    let mut ids: Vec<i32> = edges
-        .iter()
-        .flat_map(|e| [e.target, e.regulator])
-        .collect();
+    let mut ids: Vec<i32> = edges.iter().flat_map(|e| [e.target, e.regulator]).collect();
     ids.sort_unstable();
     ids.dedup();
     let map = |id: i32| ids.iter().position(|&v| v == id).unwrap();
@@ -459,15 +511,8 @@ fn continuous_cif(
         }
         if n_diff[i] > 0 {
             for _ in 0..n_diff[i] {
-                let sampled = sample_subtree(
-                    rng,
-                    tree,
-                    tree.root(),
-                    0.0,
-                    center,
-                    ncells,
-                    Some(&neutral),
-                );
+                let sampled =
+                    sample_subtree(rng, tree, tree.root(), 0.0, center, ncells, Some(&neutral));
                 let col = (0..ncells).map(|r| sampled[r][3]).collect();
                 cols.push(col);
             }
@@ -545,7 +590,12 @@ fn match_density(rng: &mut Rng, values_x: &[f64], pool: &mut Vec<f64>, den: &Den
     let mut values = values_x.to_vec();
     values.extend_from_slice(pool);
     let ranks = rank_average(&values);
-    let nsample = ranks.iter().copied().fold(0.0_f64, f64::max).trunc().max(0.0) as usize;
+    let nsample = ranks
+        .iter()
+        .copied()
+        .fold(0.0_f64, f64::max)
+        .trunc()
+        .max(0.0) as usize;
     let mut sorted = sample_den(rng, nsample, den);
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let out = ranks[..values_x.len()]
@@ -605,9 +655,30 @@ fn build_giv(
 ) -> [Mat; 3] {
     let n_cif = opt.num_cifs;
     let mut giv = [
-        identity_vectors(rng, grn.n_gene, n_cif, opt.giv_prob, opt.giv_mean, opt.giv_sd),
-        identity_vectors(rng, grn.n_gene, n_cif, opt.giv_prob, opt.giv_mean, opt.giv_sd),
-        identity_vectors(rng, grn.n_gene, n_cif, opt.giv_prob, opt.giv_mean, opt.giv_sd),
+        identity_vectors(
+            rng,
+            grn.n_gene,
+            n_cif,
+            opt.giv_prob,
+            opt.giv_mean,
+            opt.giv_sd,
+        ),
+        identity_vectors(
+            rng,
+            grn.n_gene,
+            n_cif,
+            opt.giv_prob,
+            opt.giv_mean,
+            opt.giv_sd,
+        ),
+        identity_vectors(
+            rng,
+            grn.n_gene,
+            n_cif,
+            opt.giv_prob,
+            opt.giv_mean,
+            opt.giv_sd,
+        ),
     ];
     let n_reg = grn.regulators.len();
     giv[0] = giv[0].hcat(&Mat::zeros(grn.n_gene, n_reg));
@@ -642,9 +713,7 @@ fn build_giv(
     let prod = matmul(&grn.geff, &reg_giv);
     let mut eff_rows: Vec<(usize, Vec<f64>)> = Vec::new();
     for g in 0..grn.n_gene {
-        let n = (0..n_reg)
-            .filter(|&c| grn.geff.get(g, c) != 0.0)
-            .count();
+        let n = (0..n_reg).filter(|&c| grn.geff.get(g, c) != 0.0).count();
         if n == 0 {
             continue;
         }
@@ -741,7 +810,12 @@ fn atac_adjust_kon(
         .zip(r_kon.iter())
         .map(|(a, b)| effect * a + (1.0 - effect) * b)
         .collect();
-    let nsample = ranks.iter().copied().fold(0.0_f64, f64::max).trunc().max(0.0) as usize;
+    let nsample = ranks
+        .iter()
+        .copied()
+        .fold(0.0_f64, f64::max)
+        .trunc()
+        .max(0.0) as usize;
     let mut sorted = sample_den(rng, nsample, den);
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     for (i, &rk) in ranks.iter().enumerate() {
@@ -775,8 +849,24 @@ fn beta_poisson(rng: &mut Rng, kon: f64, koff: f64, s: f64, noise: f64) -> f64 {
     noise * x + (1.0 - noise) * x_mean
 }
 
-fn gen_gene(
-    rng: &mut Rng,
+fn telegraph_step(kon: f64, koff: f64, cycle_factor: f64) -> (f64, f64, f64) {
+    let cycle_length = 1.0 / kon + 1.0 / koff;
+    let min_w = (1.0 / kon).min(1.0 / koff);
+    let npart = ((cycle_length / min_w).ceil() * cycle_factor).max(cycle_length * cycle_factor);
+    let stepsize = cycle_length / npart;
+    let p_off = 1.0 / (npart * ((1.0 / koff) / cycle_length));
+    let p_on = 1.0 / (npart * ((1.0 / kon) / cycle_length));
+    (stepsize, p_off, p_on)
+}
+
+/// Telegraph trajectory without storing every step.
+///
+/// The sampled point is the same one R's `which.min` keeps: the first minimum
+/// of `|time within the last cycle - target|`. `next_unif` supplies the promoter
+/// switches. Callers may pass the master stream or a per-gene stream.
+fn integrate_gene(
+    next_unif: &mut impl FnMut() -> f64,
+    target: f64,
     kon: f64,
     koff: f64,
     s: f64,
@@ -785,47 +875,39 @@ fn gen_gene(
     start_state: f64,
     start_u: Option<f64>,
     start_s: Option<f64>,
-    randpoints: &mut Option<Vec<f64>>,
     ncells: usize,
     cycle_factor: f64,
 ) -> (f64, f64, f64) {
-    let mut cycle_length = 1.0 / kon + 1.0 / koff;
-    let mut min_w = (1.0 / kon).min(1.0 / koff);
-    let mut npart = ((cycle_length / min_w).ceil() * cycle_factor).max(cycle_length * cycle_factor);
-    let mut stepsize = cycle_length / npart;
-    let mut p_off = 1.0 / (npart * ((1.0 / koff) / cycle_length));
-    let mut p_on = 1.0 / (npart * ((1.0 / kon) / cycle_length));
-    let mut x = vec![start_u.unwrap_or(s * kon / (kon + koff) / beta)];
-    let mut y = vec![start_s.unwrap_or(s * kon / (kon + koff) / d)];
-    let mut which_cell = vec![1.0];
-    let mut curr_time = vec![0.0];
-    let mut curr_state = vec![start_state];
+    let (mut stepsize, mut p_off, mut p_on) = telegraph_step(kon, koff, cycle_factor);
+    let mut x = start_u.unwrap_or(s * kon / (kon + koff) / beta);
+    let mut y = start_s.unwrap_or(s * kon / (kon + koff) / d);
+    let mut which = 1.0;
+    let mut time = 0.0;
+    let mut state = start_state;
+    let mut best_abs = f64::MAX;
+    let mut best = (x, y, state);
+    if which == ncells as f64 {
+        best_abs = ((time - (ncells as f64 - 1.0)) - target).abs();
+    }
     loop {
-        let new_time = *curr_time.last().unwrap() + stepsize;
-        curr_time.push(new_time);
-        let prev_cell = *which_cell.last().unwrap();
-        if new_time - prev_cell > 0.0 {
-            let nc = prev_cell + 1.0;
+        let new_time = time + stepsize;
+        time = new_time;
+        if new_time - which > 0.0 {
+            let nc = which + 1.0;
             if nc > ncells as f64 {
                 break;
             }
-            which_cell.push(nc);
-            cycle_length = 1.0 / kon + 1.0 / koff;
-            min_w = (1.0 / kon).min(1.0 / koff);
-            npart = ((cycle_length / min_w).ceil() * cycle_factor).max(cycle_length * cycle_factor);
-            stepsize = cycle_length / npart;
-            p_off = 1.0 / (npart * ((1.0 / koff) / cycle_length));
-            p_on = 1.0 / (npart * ((1.0 / kon) / cycle_length));
-        } else {
-            which_cell.push(prev_cell);
+            which = nc;
+            let stepped = telegraph_step(kon, koff, cycle_factor);
+            stepsize = stepped.0;
+            p_off = stepped.1;
+            p_on = stepped.2;
         }
-        let prev_state = *curr_state.last().unwrap();
-        let u = rng.unif();
-        let threshold = if prev_state == 1.0 { 1.0 - p_off } else { p_on };
+        let u = next_unif();
+        let threshold = if state == 1.0 { 1.0 - p_off } else { p_on };
         let new_state = if u > threshold { 2.0 } else { 1.0 };
-        curr_state.push(new_state);
-        let xprev = *x.last().unwrap();
-        let yprev = *y.last().unwrap();
+        let xprev = x;
+        let yprev = y;
         let mut xn = if new_state == 1.0 {
             xprev + s * stepsize - beta * xprev * stepsize
         } else {
@@ -838,35 +920,69 @@ fn gen_gene(
         if yn < 0.0 {
             yn = 0.0;
         }
-        x.push(xn);
-        y.push(yn);
-    }
-    if randpoints.is_none() {
-        *randpoints = Some((0..ncells).map(|_| rng.unif()).collect());
-    }
-    let points = randpoints.as_ref().unwrap();
-    let icell = ncells;
-    let idxs: Vec<usize> = which_cell
-        .iter()
-        .enumerate()
-        .filter(|(_, w)| **w == icell as f64)
-        .map(|(i, _)| i)
-        .collect();
-    let target = points[icell - 1];
-    let mut best = 0;
-    let mut best_abs = f64::MAX;
-    for (k, &i) in idxs.iter().enumerate() {
-        let val = ((curr_time[i] - (icell as f64 - 1.0)) - target).abs();
-        if val < best_abs {
-            best_abs = val;
-            best = k;
+        x = xn;
+        y = yn;
+        state = new_state;
+        if which == ncells as f64 {
+            let val = ((time - (ncells as f64 - 1.0)) - target).abs();
+            if val < best_abs {
+                best_abs = val;
+                best = (x, y, state);
+            }
         }
     }
-    let i = idxs[best];
-    (x[i].trunc(), y[i].trunc(), curr_state[i])
+    (best.0.trunc(), best.1.trunc(), best.2)
+}
+
+fn par_map<R, F>(n: usize, f: F) -> Vec<R>
+where
+    R: Send,
+    F: Fn(usize) -> R + Sync + Send,
+{
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, n.max(1));
+    if workers == 1 || n < 8 {
+        return (0..n).map(&f).collect();
+    }
+    let chunk = n.div_ceil(workers);
+    let f = &f;
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for t in 0..workers {
+            let start = t * chunk;
+            if start >= n {
+                break;
+            }
+            let end = (start + chunk).min(n);
+            handles.push(scope.spawn(move || (start..end).map(|i| (i, f(i))).collect::<Vec<_>>()));
+        }
+        let mut out: Vec<Option<R>> = Vec::with_capacity(n);
+        out.resize_with(n, || None);
+        for handle in handles {
+            for (i, value) in handle.join().unwrap() {
+                out[i] = Some(value);
+            }
+        }
+        out.into_iter().map(|value| value.unwrap()).collect()
+    })
+}
+
+struct KineticGene {
+    seed: u32,
+    kon: f64,
+    koff: f64,
+    s: f64,
+    beta: f64,
+    d: f64,
+    start_state: f64,
+    start_u: Option<f64>,
+    start_s: Option<f64>,
 }
 
 pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimError> {
+    blas_single_thread();
     if opt.discrete_cif {
         return Err(SimError::Unsupported(
             "discrete cell populations are not in this Rust port yet",
@@ -953,7 +1069,12 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
     let mut pool_koff = Vec::new();
     let mut pool_s = Vec::new();
     let mut kon = match_matrix(rng, &matmul_bt(&cif_kon, &giv[0]), &mut pool_kon, &dens.kon);
-    let koff = match_matrix(rng, &matmul_bt(&cif_koff, &giv[1]), &mut pool_koff, &dens.koff);
+    let koff = match_matrix(
+        rng,
+        &matmul_bt(&cif_koff, &giv[1]),
+        &mut pool_koff,
+        &dens.koff,
+    );
     atac_adjust_kon(rng, &mut kon, &atac, &region, opt.atac_effect, &dens.kon);
     let n_bimod = (n_gene as f64 * 0.5).ceil() as i32;
     let chosen = rng.sample_uniform(n_gene as i32, n_bimod, false);
@@ -1013,12 +1134,17 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
                 .expect("parent edge produced no cells");
             cif_regu[last].clone()
         };
+        let mut linear = vec![0.0; n_gene];
+        let mut curr_row = Mat::zeros(1, n_reg);
+        let mut extra = Mat::zeros(1, n_gene);
         for (n, &i_cell) in cells.iter().enumerate() {
-            let mut linear = s_base.row(i_cell);
-            let curr_row = Mat::from_col_major(1, n_reg, curr.clone());
-            let extra = matmul_bt(&curr_row, &grn.geff);
-            for g in 0..n_gene {
-                linear[g] += extra.get(0, g) * opt.grn_effect;
+            s_base.copy_row(i_cell, &mut linear);
+            if n_reg > 0 {
+                curr_row.data.copy_from_slice(&curr);
+                matmul_bt_into(&curr_row, &grn.geff, &mut extra);
+                for g in 0..n_gene {
+                    linear[g] += extra.get(0, g) * opt.grn_effect;
+                }
             }
             let matched = match_density(rng, &linear, &mut pool_s, &dens.s);
             let s_cell: Vec<f64> = matched
@@ -1044,39 +1170,59 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
                 };
                 let fst = last_parent.is_none();
                 let cycles = if fst { 15 } else { opt.num_cycles };
-                // `randpoints1 = runif(cycles)` is a lazy argument. The first
-                // gene's trajectory is drawn before that promise is forced.
-                let mut randpoints: Option<Vec<f64>> = None;
+                // One master uniform seeds each gene's own generator, then the
+                // shared cycle phase is drawn. The telegraph steps, which are
+                // the long loop, run in parallel and do not take turns on the
+                // master stream. The numbers differ from R's single stream; the
+                // rates and the which.min rule do not.
+                let parent = last_parent.unwrap_or(0);
+                let mut jobs = Vec::with_capacity(n_gene);
+                for g in 0..n_gene {
+                    let seed = (rng.unif() * 4294967296.0) as u32;
+                    jobs.push(KineticGene {
+                        seed,
+                        kon: kon.get(g, i_cell),
+                        koff: koff.get(g, i_cell),
+                        s: s_cell[g],
+                        beta: beta_genes[g],
+                        d: d_genes[g],
+                        start_state: if fst { root_state[g] } else { state[parent][g] },
+                        start_u: if fst {
+                            None
+                        } else {
+                            Some(unspliced_cg.get(parent, g))
+                        },
+                        start_s: if fst {
+                            None
+                        } else {
+                            Some(counts_cg.get(parent, g))
+                        },
+                    });
+                }
+                let randpoints: Vec<f64> = (0..cycles).map(|_| rng.unif()).collect();
+                let target = randpoints[cycles - 1];
+                let solved = par_map(n_gene, |g| {
+                    let job = &jobs[g];
+                    let mut child = Rng::seed(job.seed);
+                    integrate_gene(
+                        &mut || child.unif(),
+                        target,
+                        job.kon,
+                        job.koff,
+                        job.s,
+                        job.beta,
+                        job.d,
+                        job.start_state,
+                        job.start_u,
+                        job.start_s,
+                        cycles,
+                        opt.cycle_len,
+                    )
+                });
                 let mut u_out = vec![0.0; n_gene];
                 let mut s_out = vec![0.0; n_gene];
                 let mut st_out = vec![0.0; n_gene];
-                for g in 0..n_gene {
-                    let (u, s, st) = gen_gene(
-                        rng,
-                        kon.get(g, i_cell),
-                        koff.get(g, i_cell),
-                        s_cell[g],
-                        beta_genes[g],
-                        d_genes[g],
-                        if fst {
-                            root_state[g]
-                        } else {
-                            state[last_parent.unwrap()][g]
-                        },
-                        if fst {
-                            None
-                        } else {
-                            Some(unspliced_cg.get(last_parent.unwrap(), g))
-                        },
-                        if fst {
-                            None
-                        } else {
-                            Some(counts_cg.get(last_parent.unwrap(), g))
-                        },
-                        &mut randpoints,
-                        cycles,
-                        opt.cycle_len,
-                    );
+                for (g, (u, s, st)) in solved.into_iter().enumerate() {
                     u_out[g] = u;
                     s_out[g] = s;
                     st_out[g] = st;
@@ -1087,8 +1233,7 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
                 } else {
                     cell_time[last_parent.unwrap()]
                 };
-                let points = randpoints.unwrap();
-                cell_time[i_cell] = points[cycles - 1] + (cycles - 1) as f64 + start_t;
+                cell_time[i_cell] = randpoints[cycles - 1] + (cycles - 1) as f64 + start_t;
                 for g in 0..n_gene {
                     unspliced_cg.set(i_cell, g, u_out[g]);
                     counts_cg.set(i_cell, g, s_out[g]);

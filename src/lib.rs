@@ -3,6 +3,9 @@
 //! Counts are generated from an R-compatible random stream ([`Rng`]). Seeding
 //! with [`Rng::seed`]`(0)`, building a tree with [`phyla5`], then calling
 //! [`sim_true_counts`] follows the same stream as `set.seed(0); Phyla5(); sim_true_counts(...)`.
+//! Within one cell, each kinetic gene has its own generator seeded from that
+//! stream and the genes are integrated in parallel. `dgemm` is single-threaded
+//! so rank-matched parameters do not depend on a parallel reduction.
 //!
 //! Spatial cell-cell interaction, dynamic GRNs, discrete populations, technical
 //! PCR noise, and the plotting/Shiny helpers remain in the R sources.
