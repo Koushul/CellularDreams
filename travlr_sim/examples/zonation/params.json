@@ -1,0 +1,20 @@
+{
+  "package": "travlr-sim",
+  "version": "0.1.0",
+  "scene": "zonation",
+  "scene_id": 6,
+  "seed": 20247124,
+  "dt_hours": 0.5,
+  "duration_hours": 12.0,
+  "genes": [
+    "ligand",
+    "decoy",
+    "null",
+    "receptor",
+    "receptor_b",
+    "target",
+    "tf",
+    "cycle"
+  ],
+  "edges": []
+}
