@@ -84,6 +84,7 @@ po/*~
 
 # End of https://www.toptal.com/developers/gitignore/api/r,macos
 
+/target
 /temp
 /sim
 /bench
