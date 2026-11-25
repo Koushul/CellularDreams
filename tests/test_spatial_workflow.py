@@ -75,6 +75,42 @@ class DatasetTests(unittest.TestCase):
             params = (path / "params.json").read_text()
             self.assertIn("spatial-transcriptomics", params)
 
+    def test_rust_file_keeps_atac_grn_and_kinetics(self):
+        binary = Path("target/release/scmultisim-export")
+        if not binary.is_file():
+            self.skipTest("scmultisim-export is not built")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)
+            data = generate(
+                path,
+                layout="islands",
+                expression="rust",
+                n_cells=16,
+                seed=6,
+                velocity=True,
+                binary=binary,
+            )
+            self.assertEqual(data.layers["kon"].shape, data.X.shape)
+            self.assertEqual(data.layers["koff"].shape, data.X.shape)
+            self.assertEqual(data.layers["s"].shape, data.X.shape)
+            self.assertEqual(data.layers["unspliced"].shape, data.X.shape)
+            self.assertEqual(data.obsm["atac"].shape[0], data.n_obs)
+            self.assertEqual(data.obsm["atac_clean"].shape, data.obsm["atac"].shape)
+            self.assertEqual(data.uns["region_to_gene"].shape[1], data.n_vars)
+            self.assertEqual(data.varm["giv_s"].shape[0], data.n_vars)
+            self.assertEqual(data.obsm["cif_s"].shape[0], data.n_obs)
+            self.assertGreater(len(data.uns["grn_effect"]), 0)
+            self.assertEqual(len(data.uns["grn_target"]), len(data.uns["grn_regulator"]))
+            self.assertEqual(data.uns["geff"].shape[0], data.n_vars)
+            self.assertEqual(data.var["beta"].shape[0], data.n_vars)
+            self.assertEqual(data.obsm["spatial"].shape, (16, 2))
+            expected = data.layers["s"] * data.layers["kon"] / (data.layers["kon"] + data.layers["koff"])
+            corr = np.corrcoef(np.asarray(data.X).ravel(), expected.ravel())[0, 1]
+            self.assertGreater(corr, 0.4)
+            again = ad.read_h5ad(path / "observed.h5ad")
+            self.assertEqual(again.uns["grn_effect"].shape, data.uns["grn_effect"].shape)
+            self.assertEqual(again.layers["s"].shape, data.layers["s"].shape)
+
     def test_travlr_scene_keeps_its_positions(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = generate(Path(tmp), layout="zonation", expression="travlr", seed=5)

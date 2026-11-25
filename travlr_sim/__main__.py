@@ -21,6 +21,7 @@ def main() -> None:
     parser.add_argument("--cells", type=int, default=48)
     parser.add_argument("--types", type=int, default=3)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--velocity", action="store_true", help="Ask the Rust simulator for unspliced counts and velocity")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     if args.expression != "travlr" and args.layout not in LAYOUTS:
@@ -32,6 +33,7 @@ def main() -> None:
         n_cells=args.cells,
         n_types=args.types,
         seed=args.seed,
+        velocity=args.velocity,
     )
     print(f"wrote {args.out} with {data.n_obs} cells and {data.n_vars} genes")
 

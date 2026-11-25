@@ -1,10 +1,10 @@
 """Spatial transcriptomics datasets on top of the existing simulators.
 
 Grid layouts follow scMultiSim's placements (basic, enhanced, layers, islands).
-Expression is either a small cell-type program, one of the travlr scenes, or a
-Beta-Poisson matrix from the Rust simulator. Neighbor ligand exposure is added
-afterwards and kept as ground truth. Visium, Slide-seq, spillover, and panel
-files use the observation models already in this package.
+Expression is a small cell-type program, a travlr scene, or a Rust scMultiSim
+run. The Rust run keeps its own GEX, ATAC, GRN, kinetic rates, and identity
+factors; the layout only adds coordinates. Visium, Slide-seq, spillover, and
+panel files use the observation models already in this package.
 """
 
 from __future__ import annotations
@@ -31,52 +31,94 @@ LAYOUTS = ("basic", "enhanced", "layers", "islands")
 def read_rust_counts(path: Path) -> dict:
     """Read a file written by ``scmultisim-export``."""
     blob = Path(path).read_bytes()
-    magic = b"SMSCOUNTS1\n"
+    magic = b"SMSCOUNTS2\n"
     if not blob.startswith(magic):
-        raise ValueError(f"{path} is not an scmultisim-export file")
+        raise ValueError(f"{path} is not an scmultisim-export v2 file")
     cursor = len(magic)
-    n_genes, n_cells, n_regions = struct.unpack_from("<III", blob, cursor)
-    cursor += 12
-    count_n = n_genes * n_cells
-    atac_n = n_regions * n_cells
-    flat = np.frombuffer(blob, dtype="<f8", count=count_n, offset=cursor).copy()
-    counts = flat.reshape(n_cells, n_genes)
-    cursor += count_n * 8
-    atac_flat = np.frombuffer(blob, dtype="<f8", count=atac_n, offset=cursor).copy()
-    atac = np.zeros((n_cells, n_regions), dtype=float)
-    for cell in range(n_cells):
-        start = cell * n_regions
-        atac[cell] = atac_flat[start : start + n_regions]
-    cursor += atac_n * 8
-    depth = np.frombuffer(blob, dtype="<f8", count=n_cells, offset=cursor).copy()
-    cursor += n_cells * 8
+    (n_matrices,) = struct.unpack_from("<I", blob, cursor)
+    cursor += 4
+    matrices = {}
+    for _ in range(n_matrices):
+        (name_len,) = struct.unpack_from("<I", blob, cursor)
+        cursor += 4
+        name = blob[cursor : cursor + name_len].decode()
+        cursor += name_len
+        nrow, ncol = struct.unpack_from("<II", blob, cursor)
+        cursor += 8
+        count = nrow * ncol
+        flat = np.frombuffer(blob, dtype="<f8", count=count, offset=cursor).copy()
+        cursor += count * 8
+        matrices[name] = _from_column_major(flat, nrow, ncol)
+    (n_labels,) = struct.unpack_from("<I", blob, cursor)
+    cursor += 4
     labels = []
-    for _ in range(n_cells):
+    for _ in range(n_labels):
         (nbytes,) = struct.unpack_from("<I", blob, cursor)
         cursor += 4
         labels.append(blob[cursor : cursor + nbytes].decode())
         cursor += nbytes
+    (n_edges,) = struct.unpack_from("<I", blob, cursor)
+    cursor += 4
+    edges = []
+    for _ in range(n_edges):
+        target, regulator = struct.unpack_from("<II", blob, cursor)
+        cursor += 8
+        (effect,) = struct.unpack_from("<d", blob, cursor)
+        cursor += 8
+        edges.append((target, regulator, effect))
+    (n_ids,) = struct.unpack_from("<I", blob, cursor)
+    cursor += 4
+    gene_ids = np.frombuffer(blob, dtype="<i4", count=n_ids, offset=cursor).copy()
+    cursor += n_ids * 4
+    regulators = _read_index(blob, cursor)
+    cursor = regulators[1]
+    targets = _read_index(blob, cursor)
+    counts = matrices["counts"]
     return {
         "counts": counts,
-        "atac": atac,
-        "depth": depth,
+        "matrices": matrices,
         "cell_pop": labels,
-        "genes": [f"gene_{i}" for i in range(n_genes)],
+        "grn_edges": edges,
+        "gene_ids": gene_ids,
+        "regulators": regulators[0],
+        "targets": targets[0],
+        "genes": [f"gene_{i}" for i in range(counts.shape[1])],
     }
 
 
-def export_rust_counts(path: Path, n_cells: int, seed: int, binary: Path | None = None) -> dict:
-    """Run the Rust Beta-Poisson exporter and read it back."""
+def _from_column_major(flat: np.ndarray, nrow: int, ncol: int) -> np.ndarray:
+    """Return a C-order array of shape ``(ncol, nrow)`` when the matrix is gene × cell.
+
+    Column ``c`` of the Rust matrix becomes row ``c`` here, so a gene × cell
+    matrix becomes cells × genes and a region × cell matrix becomes cells × regions.
+    A gene × factor matrix is transposed back by the caller when rows must stay genes.
+    """
+    if nrow == 0 or ncol == 0:
+        return np.zeros((ncol, nrow))
+    return flat.reshape(ncol, nrow, order="C")
+
+
+def _read_index(blob: bytes, cursor: int) -> tuple[np.ndarray, int]:
+    (n,) = struct.unpack_from("<I", blob, cursor)
+    cursor += 4
+    values = np.frombuffer(blob, dtype="<u4", count=n, offset=cursor).copy()
+    return values, cursor + n * 4
+
+
+def export_rust_counts(
+    path: Path, n_cells: int, seed: int, binary: Path | None = None, velocity: bool = False
+) -> dict:
+    """Run the Rust simulator and read its counts plus ground truth."""
     binary = binary or _default_binary()
     if not binary.is_file():
         raise FileNotFoundError(
             f"missing {binary}. Build it with `cargo build --release --bin scmultisim-export`."
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [str(binary), "--cells", str(n_cells), "--seed", str(seed), "--out", str(path)],
-        check=True,
-    )
+    command = [str(binary), "--cells", str(n_cells), "--seed", str(seed), "--out", str(path)]
+    if velocity:
+        command.append("--velocity")
+    subprocess.run(command, check=True)
     return read_rust_counts(path)
 
 
@@ -100,12 +142,14 @@ def generate(
     domain_um: float = 200.0,
     cci_coef: float = 0.15,
     binary: Path | None = None,
+    velocity: bool = False,
 ) -> ad.AnnData:
     """Write a spatial dataset and return the single-cell AnnData.
 
-    ``expression`` is ``program`` (cell-type markers plus a ligand), ``travlr``
-    (an existing scene; ``layout`` is the scene name), or ``rust`` (Beta-Poisson
-    counts from ``scmultisim-export``, then a neighbor ligand effect on top).
+    ``expression="rust"`` keeps the simulator's GEX, ATAC, GRN, kinetic rates,
+    and cell factors. The layout adds coordinates and neighbor edges and does
+    not change those counts. ``program`` is a small spatial ligand model.
+    ``travlr`` uses an existing scene; ``layout`` is then the scene name.
     """
     out_dir = Path(out_dir)
     rng = np.random.default_rng(seed)
@@ -114,7 +158,9 @@ def generate(
     elif expression == "program":
         table = _from_program(layout, n_cells, n_types, rng, domain_um, cci_coef)
     elif expression == "rust":
-        table = _from_rust(out_dir / "counts.sms", layout, n_cells, n_types, seed, domain_um, cci_coef, binary)
+        table = _from_rust(
+            out_dir / "counts.sms", layout, n_cells, n_types, seed, domain_um, binary, velocity
+        )
     else:
         raise ValueError("expression must be program, travlr, or rust")
     observed = _anndata(table)
@@ -153,30 +199,60 @@ def _from_program(layout, n_cells, n_types, rng, domain_um, cci_coef) -> dict:
     )
 
 
-def _from_rust(path, layout, n_cells, n_types, seed, domain_um, cci_coef, binary) -> dict:
-    exported = export_rust_counts(path, n_cells, seed, binary)
+def _cells_by_features(matrix: np.ndarray) -> np.ndarray:
+    """``_from_column_major`` already put original columns on axis 0."""
+    return np.asarray(matrix, dtype=float)
+
+
+def _from_rust(path, layout, n_cells, n_types, seed, domain_um, binary, velocity: bool) -> dict:
+    exported = export_rust_counts(path, n_cells, seed, binary, velocity)
     rng = np.random.default_rng(seed + 17)
     spatial = place(layout, n_cells, n_types, rng, domain_um)
-    before = exported["counts"]
-    ligand = before[:, 0]
-    exposure = neighbor_exposure(ligand, spatial["neighbors"])
-    impact = cci_coef * exposure
-    counts = before.copy()
-    if counts.shape[1] > 1:
-        counts[:, 1] = counts[:, 1] + impact
-    return _table(
+    matrices = exported["matrices"]
+    counts = _cells_by_features(matrices["counts"])
+    zeros = np.zeros(n_cells)
+    table = _table(
         counts,
         exported["genes"],
         spatial,
         layout,
         "rust",
-        before=before,
-        exposure=exposure,
-        impact=impact,
+        before=counts.copy(),
+        exposure=zeros,
+        impact=zeros,
         cell_pop=np.array(exported["cell_pop"]),
-        atac=exported["atac"],
-        depth=exported["depth"],
+        atac=_cells_by_features(matrices["atac_counts"]),
+        depth=_cells_by_features(matrices["cell_depth"]).ravel(),
     )
+    ground = {
+        "kon": _cells_by_features(matrices["kon"]),
+        "koff": _cells_by_features(matrices["koff"]),
+        "s": _cells_by_features(matrices["s"]),
+        "atac_clean": _cells_by_features(matrices["atacseq"]),
+        "giv_kon": matrices["giv_kon"].T,
+        "giv_koff": matrices["giv_koff"].T,
+        "giv_s": matrices["giv_s"].T,
+        "cif_kon": matrices["cif_kon"].T,
+        "cif_koff": matrices["cif_koff"].T,
+        "cif_s": matrices["cif_s"].T,
+        "cif_atac": matrices["cif_atac"].T,
+        "riv": matrices["riv"].T,
+        "region_to_gene": matrices["region_to_gene"].T,
+        "geff": matrices["geff"].T,
+        "neutral": matrices["neutral"].T,
+        "tree": matrices["tree"].T,
+        "grn_edges": exported["grn_edges"],
+        "gene_ids": exported["gene_ids"],
+        "regulators": exported["regulators"],
+        "targets": exported["targets"],
+    }
+    if "unspliced" in matrices:
+        ground["unspliced"] = _cells_by_features(matrices["unspliced"])
+        ground["velocity"] = _cells_by_features(matrices["velocity"])
+        ground["beta"] = _cells_by_features(matrices["beta"]).ravel()
+        ground["degradation"] = _cells_by_features(matrices["degradation"]).ravel()
+    table["ground"] = ground
+    return table
 
 
 def _from_travlr(scene_name: str, seed: int) -> dict:
@@ -229,6 +305,7 @@ def _table(counts, genes, spatial, layout, expression, before, exposure, impact,
         "atac": atac,
         "depth": depth,
         "cell_ids": cell_ids if cell_ids is not None else np.arange(len(counts)),
+        "ground": None,
     }
 
 
@@ -255,7 +332,49 @@ def _anndata(table: dict) -> ad.AnnData:
         data.obsm["atac"] = table["atac"]
     if table["depth"] is not None:
         data.obs["cell_depth"] = table["depth"]
+    ground = table.get("ground")
+    if ground is not None:
+        _attach_ground_truth(data, ground)
     return data
+
+
+def _attach_ground_truth(data: ad.AnnData, ground: dict) -> None:
+    """Store the mechanistic quantities that produced ``X``."""
+    for key in ("kon", "koff", "s", "unspliced", "velocity"):
+        if key in ground:
+            data.layers[key] = ground[key]
+    data.obsm["atac_clean"] = ground["atac_clean"]
+    for key in ("cif_kon", "cif_koff", "cif_s", "cif_atac"):
+        data.obsm[key] = ground[key]
+    for key in ("giv_kon", "giv_koff", "giv_s"):
+        data.varm[key] = ground[key]
+    data.uns["region_to_gene"] = ground["region_to_gene"]
+    data.uns["riv"] = ground["riv"]
+    data.uns["geff"] = ground["geff"]
+    data.uns["neutral"] = ground["neutral"]
+    data.uns["tree"] = ground["tree"]
+    edges = ground["grn_edges"]
+    data.uns["grn_target"] = np.array([edge[0] for edge in edges], dtype=np.int32)
+    data.uns["grn_regulator"] = np.array([edge[1] for edge in edges], dtype=np.int32)
+    data.uns["grn_effect"] = np.array([edge[2] for edge in edges], dtype=float)
+    data.uns["regulators"] = np.asarray(ground["regulators"], dtype=np.int32)
+    data.uns["targets"] = np.asarray(ground["targets"], dtype=np.int32)
+    data.var["gene_id"] = np.asarray(ground["gene_ids"])
+    if "beta" in ground:
+        data.var["beta"] = ground["beta"]
+        data.var["degradation"] = ground["degradation"]
+    data.uns["ground_truth"] = np.array(
+        [
+            "X is simulated GEX",
+            "layers kon, koff, s are the kinetic rates",
+            "obsm atac is chromatin accessibility after technical noise",
+            "obsm atac_clean is accessibility before that noise",
+            "uns grn_* is the gene regulatory network",
+            "varm giv_* and obsm cif_* are the identity factors",
+            "uns region_to_gene maps regions to genes",
+            "obsm spatial is the layout and does not alter X",
+        ]
+    )
 
 
 def _params(table: dict, seed: int, cci_coef: float) -> dict:

@@ -133,6 +133,33 @@ pub struct SimResult {
     pub cell_depth: Vec<f64>,
     /// Rows are `(from, to, time, state)` along the sampled trajectory.
     pub neutral: Mat,
+    /// Kinetic parameters, gene × cell, the rates that produced `counts`.
+    pub kon: Mat,
+    pub koff: Mat,
+    pub s: Mat,
+    /// Gene identity vectors. Rows are genes.
+    pub giv_kon: Mat,
+    pub giv_koff: Mat,
+    pub giv_s: Mat,
+    /// Cell identity factors. Rows are cells.
+    pub cif_kon: Mat,
+    pub cif_koff: Mat,
+    pub cif_s: Mat,
+    pub cif_atac: Mat,
+    /// Region identity vectors, regions × factors.
+    pub riv: Mat,
+    /// Region × gene indicator of the chromatin-to-gene map.
+    pub region_to_gene: Mat,
+    /// Gene × regulator effects used inside the simulation.
+    pub geff: Mat,
+    pub regulators: Vec<usize>,
+    pub targets: Vec<usize>,
+    /// Edges as `(target, regulator, effect)` with 0-based gene indexes.
+    pub grn_edges: Vec<(usize, usize, f64)>,
+    /// Original GRN gene id for each column, or -1 for an unregulated extra gene.
+    pub gene_ids: Vec<i32>,
+    pub beta: Vec<f64>,
+    pub degradation: Vec<f64>,
 }
 
 #[derive(Debug)]
@@ -323,6 +350,8 @@ struct PreparedGrn {
     targets: Vec<usize>,
     geff: Mat,
     n_gene: usize,
+    edges: Vec<(usize, usize, f64)>,
+    gene_ids: Vec<i32>,
 }
 
 fn prepare_grn(edges: &[GrnEdge], ratio: f64) -> PreparedGrn {
@@ -344,15 +373,22 @@ fn prepare_grn(edges: &[GrnEdge], ratio: f64) -> PreparedGrn {
     targets.sort_unstable();
     targets.dedup();
     let mut geff = Mat::zeros(n_gene, regulators.len());
+    let edges = mapped.clone();
     for (t, r, effect) in mapped {
         let col = regulators.iter().position(|&g| g == r).unwrap();
         geff.set(t, col, effect);
+    }
+    let mut gene_ids = vec![-1i32; n_gene];
+    for (index, id) in ids.iter().enumerate() {
+        gene_ids[index] = *id;
     }
     PreparedGrn {
         regulators,
         targets,
         geff,
         n_gene,
+        edges,
+        gene_ids,
     }
 }
 
@@ -1086,6 +1122,7 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
     let koff = pow10_gene_cell(&koff, &bimod);
 
     let s_base = matmul_bt(&cif_s, &giv[2]);
+    let mut s_param = Mat::zeros(n_gene, n_cell);
     let root = opt.tree.root();
     let mut cif_regu = vec![vec![0.0; n_reg]; n_cell];
     let mut counts_cg = Mat::zeros(n_cell, n_gene);
@@ -1152,6 +1189,9 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
                 .enumerate()
                 .map(|(_, v)| 10f64.powf(*v) * opt.scale_s)
                 .collect();
+            for (g, value) in s_cell.iter().enumerate() {
+                s_param.set(g, i_cell, *value);
+            }
             if opt.do_velocity {
                 let last_parent = if n == 0 {
                     if edge.from == root {
@@ -1294,5 +1334,24 @@ pub fn sim_true_counts(opt: &Options, rng: &mut Rng) -> Result<SimResult, SimErr
         cell_pop,
         cell_depth,
         neutral,
+        kon,
+        koff,
+        s: s_param,
+        giv_kon: giv[0].clone(),
+        giv_koff: giv[1].clone(),
+        giv_s: giv[2].clone(),
+        cif_kon,
+        cif_koff,
+        cif_s,
+        cif_atac,
+        riv,
+        region_to_gene: region,
+        geff: grn.geff,
+        regulators: grn.regulators,
+        targets: grn.targets,
+        grn_edges: grn.edges,
+        gene_ids: grn.gene_ids,
+        beta: beta_genes,
+        degradation: d_genes,
     })
 }
