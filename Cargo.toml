@@ -10,5 +10,9 @@ readme = "README.md"
 name = "scmultisim"
 path = "src/lib.rs"
 
+[[bin]]
+name = "scmultisim-export"
+path = "src/bin/export_counts.rs"
+
 [profile.release]
 lto = false
