@@ -1,0 +1,18 @@
+[package]
+name = "scmultisim"
+version = "1.1.10"
+edition = "2021"
+license = "Artistic-2.0"
+description = "Native Rust port of scMultiSim, a GRN-guided single-cell multi-omics simulator"
+readme = "README.md"
+
+[lib]
+name = "scmultisim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "scmultisim-export"
+path = "src/bin/export_counts.rs"
+
+[profile.release]
+lto = false

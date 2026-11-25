@@ -1,0 +1,37 @@
+{
+  "package": "travlr-sim",
+  "version": "0.1.0",
+  "scene": "chemotaxis",
+  "scene_id": 11,
+  "seed": 20252124,
+  "dt_hours": 0.5,
+  "duration_hours": 12.0,
+  "genes": [
+    "ligand",
+    "decoy",
+    "null",
+    "receptor",
+    "receptor_b",
+    "target",
+    "tf",
+    "cycle"
+  ],
+  "edges": [
+    {
+      "source": 0,
+      "target": 5,
+      "kind": "ligand",
+      "length_scale_um": 40.0,
+      "knots": [
+        [
+          0.0,
+          0.3
+        ],
+        [
+          12.0,
+          0.3
+        ]
+      ]
+    }
+  ]
+}

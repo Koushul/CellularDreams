@@ -1,0 +1,10 @@
+[project]
+name = "travlr-sim"
+version = "0.1.0"
+description = "Tissue-owned kinetic simulator for SpaceTravLR and TimeTravLR tests"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "anndata"]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["travlr_sim*"]

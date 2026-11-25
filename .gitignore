@@ -84,6 +84,7 @@ po/*~
 
 # End of https://www.toptal.com/developers/gitignore/api/r,macos
 
+/target
 /temp
 /sim
 /bench
@@ -101,3 +102,7 @@ vignettes/common.Rmd
 R/.Rhistory
 scMultiSim.Rproj
 docs
+
+__pycache__/
+*.pyc
+/target/
