@@ -102,3 +102,7 @@ vignettes/common.Rmd
 R/.Rhistory
 scMultiSim.Rproj
 docs
+
+__pycache__/
+*.pyc
+/target/
